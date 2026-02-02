@@ -1,0 +1,40 @@
+{
+  "upload_directory": "/tmp/files/",
+  "output_directory": "/tmp/outputs/",
+  "system_prompt": "You are an expert code reviewer. Analyze the provided codebase for bugs, security issues, and correctness problems. Provide actionable feedback. All files are located in /tmp/files.",
+  "task_prompt": "You are an expert code reviewer. Your task is to analyze the Hofund metrics and connection monitoring library codebase. Focus on subtle bugs, data integrity issues, and logic flaws detectable via static analysis. Write your findings to /tmp/outputs/review.md.",
+  "rubric": [
+    {
+      "criterion": "Identifies the HTTP header ordering bug in hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java where setRequestHeaders() is called after connect(), causing required headers to be ignored by the server",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the cached URL bug in hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java where the URL is computed once in the constructor and reused, so dynamic changes to getUrl() are ignored",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the target tag casing bug in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java where toTargetTag() no longer lowercases the description, leading to case-sensitive ID mismatches and duplicate nodes",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the response truncation bug in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java where parseResponseBody() stops reading after 512 characters, causing detected_version to become UNKNOWN for large responses",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the status value bug in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionMeter.java where Math.abs() is applied to the status value, turning INACTIVE (-1) into 1 and masking disabled checks as UP",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the version comparison bug in hofund-core/src/main/java/dev/logchange/hofund/connection/Version.java where missing version segments are treated as -1, making 1.2 incorrectly compare lower than 1.2.0",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the node collision check bug in hofund-core/src/main/java/dev/logchange/hofund/graph/node/HofundNodeMeter.java where checkIdCollision() uses connection.getTarget() instead of toTargetTag(), allowing duplicate DB/QUEUE nodes",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the environment variable lookup bug in hofund-core/src/main/java/dev/logchange/hofund/EnvProvider.java where SystemEnvProvider lowercases the variable name before lookup, breaking standard uppercase env vars",
+      "weight": 1
+    }
+  ]
+}

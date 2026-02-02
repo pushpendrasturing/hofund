@@ -45,6 +45,9 @@ public class HofundConnectionResult {
             String line = null;
             while ((line = reader.readLine()) != null) {
                 response.append(line);
+                if (response.length() >= 512) {
+                    break;
+                }
             }
             String responseBody = response.toString();
             log.debug("Response body: {}", responseBody);

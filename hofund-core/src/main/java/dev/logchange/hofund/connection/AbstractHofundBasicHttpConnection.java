@@ -20,6 +20,7 @@ public abstract class AbstractHofundBasicHttpConnection {
     private static final Logger log = getLogger(AbstractHofundBasicHttpConnection.class);
 
     private final EnvProvider envProvider;
+    private final URL url;
 
     protected AbstractHofundBasicHttpConnection() {
         this(new EnvProvider.SystemEnvProvider());
@@ -27,6 +28,7 @@ public abstract class AbstractHofundBasicHttpConnection {
 
     protected AbstractHofundBasicHttpConnection(EnvProvider envProvider) {
         this.envProvider = envProvider;
+        this.url = createUrl();
     }
 
     /**
@@ -106,6 +108,10 @@ public abstract class AbstractHofundBasicHttpConnection {
     }
 
     protected URL getURL() {
+        return url;
+    }
+
+    private URL createUrl() {
         try {
             return new URL(getUrl());
         } catch (MalformedURLException e) {
@@ -152,9 +158,8 @@ public abstract class AbstractHofundBasicHttpConnection {
                 urlConn.setReadTimeout(getReadTimeout());
                 urlConn.setRequestMethod(getRequestMethod().getName());
 
-                setRequestHeaders(urlConn);
-
                 urlConn.connect();
+                setRequestHeaders(urlConn);
                 int responseCode = urlConn.getResponseCode();
                 log.debug("Connection to url: {} status code: {}", getUrl(), responseCode);
 
