@@ -36,7 +36,9 @@ public class DataSourceConnectionsProvider implements HofundConnectionsProvider 
 
         for (DataSource dataSource : dataSources) {
             DatasourceConnection connection = DataSourceConnectionFactory.of(dataSource);
-            if (!result.contains(connection)) {
+            boolean duplicateTarget = result.stream()
+                    .anyMatch(existing -> existing.getTarget().equals(connection.getTarget()));
+            if (!duplicateTarget) {
                 result.add(connection);
             } else {
                 log.warn("Found duplicate datasource connection to: {} url: {}", connection.getTarget(), connection.getUrl());

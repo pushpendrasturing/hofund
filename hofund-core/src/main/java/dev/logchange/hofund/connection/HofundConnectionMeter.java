@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.binder.MeterBinder;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 public class HofundConnectionMeter implements MeterBinder {
@@ -28,9 +29,13 @@ public class HofundConnectionMeter implements MeterBinder {
 
     @Override
     public void bindTo(MeterRegistry meterRegistry) {
-        connections.forEach(connection -> Gauge.builder(NAME, connection, con -> con.getFun().get().getConnection().getStatus().getValue())
-                .description(DESCRIPTION)
-                .tags(connection.getTags(infoProvider))
-                .register(meterRegistry));
+        connections.forEach(connection -> {
+            HofundConnectionResult connectionResult = connection.getFun().get().getConnection();
+            AtomicReference<Double> value = new AtomicReference<>(connectionResult.getStatus().getValue());
+            Gauge.builder(NAME, value, AtomicReference::get)
+                    .description(DESCRIPTION)
+                    .tags(connection.getTags(infoProvider))
+                    .register(meterRegistry);
+        });
     }
 }

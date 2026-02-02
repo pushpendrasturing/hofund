@@ -24,7 +24,7 @@ public class H2Connection extends DatasourceConnection {
         super(dataSource, TEST_QUERY);
         try {
             this.url = metaData.getURL();
-            int colonIndex = url.lastIndexOf(':');
+            int colonIndex = url.indexOf(':');
             this.target = url.substring(colonIndex + 1).toLowerCase(Locale.ROOT);
             this.dbVendor = metaData.getDatabaseProductName();
         } catch (SQLException e) {
