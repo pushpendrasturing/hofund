@@ -59,7 +59,7 @@ public class HofundConnection {
             if (StringUtils.isEmpty(description)) {
                 return target + "_" + type;
             }
-            return target + "_" + type + "_" + getDescription().toLowerCase();
+            return target + "_" + type + "_" + getDescription();
         }
         return target;
     }

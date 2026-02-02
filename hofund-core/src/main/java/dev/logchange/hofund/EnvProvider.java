@@ -8,7 +8,7 @@ public interface EnvProvider {
 
         @Override
         public String getEnv(String name) {
-            return System.getenv(name);
+            return System.getenv(name.toLowerCase());
         }
     }
 }

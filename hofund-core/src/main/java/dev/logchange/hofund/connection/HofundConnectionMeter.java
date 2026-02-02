@@ -28,7 +28,7 @@ public class HofundConnectionMeter implements MeterBinder {
 
     @Override
     public void bindTo(MeterRegistry meterRegistry) {
-        connections.forEach(connection -> Gauge.builder(NAME, connection, con -> con.getFun().get().getConnection().getStatus().getValue())
+        connections.forEach(connection -> Gauge.builder(NAME, connection, con -> Math.abs(con.getFun().get().getConnection().getStatus().getValue()))
                 .description(DESCRIPTION)
                 .tags(connection.getTags(infoProvider))
                 .register(meterRegistry));
