@@ -73,7 +73,7 @@ public class HofundConnectionsTable {
             log.debug("Either current({}) or required({}) version of {} is unspecified, cannot verify versions.", version, requiredVersion, target);
             return;
         }
-        if (version.compareTo(requiredVersion) <= 0) {
+        if (version.compareTo(requiredVersion) < 0) {
             log.error("Current version: {} of {} is lower than the required version: {}", version, target, requiredVersion);
         }
     }

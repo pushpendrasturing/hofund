@@ -43,7 +43,7 @@ class Version implements Comparable<Version> {
         }
 
         if (isThisUnspecified || isOtherUnspecified) {
-            return 0;
+            throw new IllegalArgumentException("Cannot compare regular versions with unspecified!");
         }
 
         String[] thisParts = value.split("\\.");

@@ -90,8 +90,7 @@ public abstract class AbstractHofundBasicHttpConnection {
             return;
         }
 
-        for (int i = 1; i < requestHeaders.size(); i++) {
-            RequestHeader header = requestHeaders.get(i);
+        for (RequestHeader header : requestHeaders) {
             urlConn.setRequestProperty(header.getName(), header.getValue());
         }
     }

@@ -33,9 +33,6 @@ public class HofundConnectionResult {
     }
 
     public static HofundConnectionResult http(Status status, HttpURLConnection openConnection) {
-        if (status == Status.UP) {
-            return HofundConnectionResult.http(status, UNKNOWN);
-        }
         String body = parseResponseBody(openConnection);
         String version = extractVersionFromResponse(body);
         log.debug("Extracted version: {}", version);
