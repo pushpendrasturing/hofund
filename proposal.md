@@ -1,523 +1,642 @@
-# Repo map
-- Core metrics and connection engine (hofund-core)
-  - connection/*: HTTP and DB connection checks, connection result parsing, status and type enums, version comparison, connection metrics and table (HofundConnection, HofundConnectionResult, AbstractHofundBasicHttpConnection, HofundConnectionMeter, HofundConnectionsTable, Version).
-  - graph/*: Node and Edge meters for Grafana Node Graph (HofundNodeMeter, HofundEdgeMeter) that depend on connection IDs and tags.
-  - info/git/os/java/web: info providers and meters for application, git metadata, OS, Java, web server (HofundInfoMeter, HofundGitInfoMeter, HofundOsInfoMeter, HofundJavaInfoMeter, HofundWebServerInfoMeter).
-  - util: AsciiTable, StringUtils, EnvProvider.
-- Spring integration (hofund-spring)
-  - connection.spring.datasource: DataSource detection, DB vendor-specific parsing, test queries (DataSourceConnectionsProvider, DataSourceConnectionFactory, DatasourceConnection, OracleConnection, PostgreSQLConnection, H2Connection, UnknownDatasourceConnection).
-  - connection.spring.http: Provider bridging AbstractHofundBasicHttpConnection beans into metrics (HofundBasicHttpConnectionProvider).
-- Spring Boot autoconfigure (hofund-spring-boot-autoconfigure)
-  - Auto-wiring of meters and providers; property binding for info and git; conditional enablement for Prometheus (HofundInfoAutoConfiguration/Properties, HofundGitInfoAutoConfiguration/Properties/Default, HofundConnectionAutoConfiguration, HofundGraphAutoConfiguration, HofundOsInfoAutoConfiguration, HofundJavaInfoAutoConfiguration, HofundWebServerInfoAutoConfiguration, ConnectionTabelAutoConfigure).
-- E2E and tests (hofund-spring-boot-e2e, hofund-core/src/test, hofund-spring/src/test)
-  - Integration examples and tests; not on runtime hot paths.
-- Non-core assets
-  - grafana-dashboards and changelog; docs and release metadata.
+# Repo map (core-focused)
+- Connection checks and metrics (hofund-core/src/main/java/dev/logchange/hofund/connection)
+  - AbstractHofundBasicHttpConnection, SimpleHofundHttpConnection: HTTP health checks, headers, timeouts, env-based disablement.
+  - HofundConnection, HofundConnectionResult, Version: connection identity/tags, HTTP response parsing, version comparison.
+  - HofundConnectionMeter, HofundConnectionsTable: Prometheus gauges and startup table output.
+  - Status/Type/RequestMethod/RequestHeader: status values, tag typing, HTTP request method/headers.
+- Graph metrics (hofund-core/src/main/java/dev/logchange/hofund/graph)
+  - HofundNodeMeter, HofundEdgeMeter: Grafana node graph tags and collision checks.
+- Info and metadata meters (hofund-core/src/main/java/dev/logchange/hofund/info, git, java, os, web)
+  - HofundInfoMeter, HofundGitInfoMeter, HofundJavaInfoMeter, HofundOsInfoMeter, HofundWebServerInfoMeter.
+- Utilities (hofund-core/src/main/java/dev/logchange/hofund)
+  - AsciiTable, StringUtils, EnvProvider.
 
-Hot paths and data flow:
-- Prometheus scrape -> micrometer Gauge -> HofundConnectionMeter -> ConnectionFunction -> HTTP/DB checks.
-- Tags and IDs flow from HofundConnection -> graph meters (node/edge) and dashboards.
-- Auto-configuration wires providers, meters, and properties in Spring Boot apps.
+Hot path summary:
+- Prometheus scrape -> hofund.connection gauge -> ConnectionFunction -> HTTP/DB checks.
+- Tags/IDs from HofundConnection feed Grafana node/edge meters.
+- Info/git/java/os/web meters provide global tags for observability.
 
-# Bug candidates
+# Additional core bug candidates (B41-B90)
+These are new, core-only candidates beyond the previous 40. No duplicates in this list.
 
-### B01 - Treat 4xx as UP for HTTP checks
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java, testConnection() ~135-166
-- Core relevance: HTTP connection checks feed hofund_connection metrics and graph edges.
-- Bug type: correctness (HTTP status classification)
-- Proposed change: change success condition to `responseCode < 500` (allow 4xx as UP).
-- Trigger conditions: endpoints returning 401/403/404/429.
-- Expected symptom: connection metrics show UP while dependency is rejecting calls.
-- Why its hard: 4xx can be intermittent and dashboards still show healthy.
+### B41 - Headers applied after connect (ignored by server)
+- Location: hofund-core/.../connection/AbstractHofundBasicHttpConnection.java, testConnection() ~150-157
+- Core relevance: HTTP checks are core health signals.
+- Bug type: correctness / request construction
+- Proposed change: call setRequestHeaders(urlConn) after urlConn.connect().
+- Trigger conditions: any auth/header-required endpoint.
+- Expected symptom: 401/403 or missing features only for header-dependent endpoints.
+- Why its hard: default endpoints still OK; failures look like remote auth issues.
 - Static-analysis discoverability: Medium.
-- Suggested detection: integration test hitting a 401 endpoint and asserting DOWN.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 5
+- Suggested detection: unit test with mock server expecting Authorization header.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
 
-### B02 - Skip disable checks until after connect
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java, testConnection() ~135-151
-- Core relevance: hot path for each HTTP dependency check.
-- Bug type: reliability/perf (unnecessary network calls)
-- Proposed change: move CheckingStatus and env-var checks below openConnection/connect.
-- Trigger conditions: connection disabled by config or env.
-- Expected symptom: network calls/timeouts despite connection marked INACTIVE.
-- Why its hard: metrics still show INACTIVE; only visible in traffic or logs.
-- Static-analysis discoverability: Low.
-- Suggested detection: unit test with EnvProvider mocked verifying no connect.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B03 - Swap connect/read timeouts
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java, testConnection() ~150-152
-- Core relevance: timeouts are critical for connection reliability.
-- Bug type: reliability/perf (timeout misconfiguration)
-- Proposed change: set connect timeout from getReadTimeout and read timeout from getConnectTimeout.
-- Trigger conditions: slow handshake vs slow response.
-- Expected symptom: false DOWNs during slow connects or hangs during slow reads.
-- Why its hard: manifests only under certain network conditions.
+### B42 - Treat only 2xx as success (3xx = DOWN)
+- Location: hofund-core/.../connection/AbstractHofundBasicHttpConnection.java, testConnection() ~161-165
+- Core relevance: HTTP status mapping drives hofund_connection.
+- Bug type: correctness / boundary handling
+- Proposed change: change success condition to responseCode >= 200 && < 300.
+- Trigger conditions: endpoints returning 301/302 (redirects).
+- Expected symptom: false DOWN for services behind redirects or TLS upgrades.
+- Why its hard: depends on deployment routing; looks like infra issue.
 - Static-analysis discoverability: Low/Medium.
-- Suggested detection: integration test with delayed connect vs delayed response.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
+- Suggested detection: integration test with 302 response.
+- Rank (1-5): Exercise 3, Stealth 4, Scorability 4
 
-### B04 - Ignore custom request method and always use GET
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java, testConnection() ~153
-- Core relevance: HTTP checks support custom request methods.
-- Bug type: API contract drift / correctness
-- Proposed change: hardcode GET instead of getRequestMethod().
-- Trigger conditions: endpoints requiring POST/HEAD or pre-signed requests.
-- Expected symptom: connection DOWN only for those endpoints; others OK.
-- Why its hard: most users use GET; failure appears endpoint-specific.
+### B43 - Case-sensitive env disable check and ignore "1"
+- Location: hofund-core/.../connection/AbstractHofundBasicHttpConnection.java, isCheckingStatusInactiveByEnvs() ~198-203
+- Core relevance: operational disablement is a key control.
+- Bug type: config parsing
+- Proposed change: use "true".equals(envVarValue) and remove the "1" check.
+- Trigger conditions: env value "TRUE", "True", or "1".
+- Expected symptom: disablement ignored only in some environments.
+- Why its hard: looks like misconfiguration; no errors.
 - Static-analysis discoverability: Medium.
-- Suggested detection: unit test using POST with a mock server.
-- Rank (1-5): Exercise value 4, Stealth 3, Scorability 5
+- Suggested detection: unit test with env values "TRUE" and "1".
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
 
-### B05 - Report INACTIVE connections as DOWN
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java, testConnection() ~140-148
-- Core relevance: inactive semantics affect alerting and graphs.
-- Bug type: correctness (state mapping)
-- Proposed change: return Status.DOWN instead of Status.INACTIVE when disabled.
-- Trigger conditions: any connection disabled by config or env.
-- Expected symptom: dashboards show outages for intentionally disabled checks.
-- Why its hard: only seen in environments that disable checks.
-- Static-analysis discoverability: Medium.
-- Suggested detection: unit test for INACTIVE mapping; alert rule check for -1.
-- Rank (1-5): Exercise value 3, Stealth 3, Scorability 5
-
-### B06 - Disconnect before reading response body
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java, testConnection() ~157-163
-- Core relevance: version extraction uses the same HttpURLConnection.
-- Bug type: data integrity / resource handling
-- Proposed change: call urlConn.disconnect() before HofundConnectionResult.http(Status.UP, urlConn).
-- Trigger conditions: any UP response with version in body.
-- Expected symptom: detected_version becomes UNKNOWN while status remains UP.
-- Why its hard: status looks fine; version loss is subtle.
-- Static-analysis discoverability: Low.
-- Suggested detection: integration test asserting detected_version from a known JSON response.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B07 - Skip first request header
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java, setRequestHeaders() ~86-95
-- Core relevance: headers often carry auth or versioning.
-- Bug type: input handling / off-by-one
-- Proposed change: iterate headers starting at index 1 (skip first).
-- Trigger conditions: first header is required (Authorization, API key).
-- Expected symptom: some connections fail with 401/403 only when headers configured.
-- Why its hard: order-dependent; with multiple headers only first is missing.
-- Static-analysis discoverability: Low.
-- Suggested detection: unit test with single Authorization header and mock server.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B08 - Env var name normalization drops underscores
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java, getEnvVarName() ~139-143
-- Core relevance: env-based disable is a key operational control.
-- Bug type: config parsing / validation
-- Proposed change: use regex "[^A-Za-z0-9]" so underscores are stripped.
-- Trigger conditions: targets containing "_" (common in service names).
-- Expected symptom: env var disable no longer works for those targets.
-- Why its hard: only affects certain target names; no compile errors.
-- Static-analysis discoverability: Medium.
-- Suggested detection: unit test verifying env var naming for targets with underscores/dashes.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B09 - Drop description from toTargetTag for DATABASE/QUEUE
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java, toTargetTag() ~57-64
-- Core relevance: tag identity drives node/edge uniqueness in Grafana graph.
-- Bug type: data integrity / ID collision
-- Proposed change: always return target + "_" + type for DATABASE/QUEUE (ignore description).
-- Trigger conditions: multiple DBs/queues with same target but different vendor/description.
-- Expected symptom: node/edge collisions; one connection overwrites another.
-- Why its hard: only appears in multi-DB setups; metrics still exist but merged.
-- Static-analysis discoverability: Low.
-- Suggested detection: integration test with two datasources same target different vendor.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 4
-
-### B10 - Edge ID uses target instead of toTargetTag
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java, getEdgeId() ~71-77
-- Core relevance: edge IDs must align with node IDs for graph.
-- Bug type: correctness / ID mismatch
-- Proposed change: build edge ID using getTarget() rather than toTargetTag().
-- Trigger conditions: DB/QUEUE connections with descriptions.
-- Expected symptom: graph edges disconnected or overwritten.
-- Why its hard: only in graph view; connection metrics still look normal.
-- Static-analysis discoverability: Low/Medium.
-- Suggested detection: Grafana node-graph snapshot test comparing expected edge ids.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 4
-
-### B11 - Swap detected_version and required_version tags
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java, getTags() ~104-112
-- Core relevance: version tags drive alerts and dashboards.
-- Bug type: data integrity
-- Proposed change: swap Tag.of("detected_version", ...) with "required_version".
-- Trigger conditions: when required version is configured.
-- Expected symptom: dashboards show required as detected and vice versa; alerts fire incorrectly.
-- Why its hard: values look plausible; only careful comparison reveals swap.
-- Static-analysis discoverability: Medium.
-- Suggested detection: unit test with requiredVersion set and expected tags.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 5
-
-### B12 - "target" tag uses getTarget() instead of toTargetTag()
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java, getTags() ~106-109
-- Core relevance: "target" tag powers graph linkage and queries.
-- Bug type: correctness / ID mismatch
-- Proposed change: Tag.of("target", getTarget()).
-- Trigger conditions: DB/QUEUE connections with description/vendor.
-- Expected symptom: graph edges not matching nodes; duplicate targets.
-- Why its hard: only in multi-DB setups; not obvious from metrics alone.
-- Static-analysis discoverability: Low.
-- Suggested detection: integration test verifying target tag for DB connection includes vendor.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 4
-
-### B13 - Use Status.ordinal() for gauge value
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionMeter.java, bindTo() ~31-34
-- Core relevance: gauge value feeds prometheus alerts.
-- Bug type: numeric correctness
-- Proposed change: map to status.ordinal() instead of getValue().
-- Trigger conditions: any INACTIVE status.
-- Expected symptom: INACTIVE becomes 2 instead of -1; alerts misfire.
-- Why its hard: values still numeric; dashboards might not show obvious issue.
-- Static-analysis discoverability: Medium.
-- Suggested detection: unit test mapping Status.INACTIVE to -1.
-- Rank (1-5): Exercise value 4, Stealth 3, Scorability 5
-
-### B14 - Cache connection result at registration (stale status)
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionMeter.java, bindTo() ~30-34
-- Core relevance: hofund_connection is the primary health signal.
+### B44 - Cache URL at construction (stale on dynamic config)
+- Location: hofund-core/.../connection/AbstractHofundBasicHttpConnection.java, constructor/getURL() ~24-114
+- Core relevance: URL is the connection target for HTTP checks.
 - Bug type: caching/invalidation
-- Proposed change: compute HofundConnectionResult once and bind gauge to that constant.
-- Trigger conditions: connection status changes after startup.
-- Expected symptom: metrics never update; stale UP/DOWN values.
-- Why its hard: only visible after changes; initial startup looks fine.
+- Proposed change: store URL once in a field (new URL(getUrl())) and reuse it.
+- Trigger conditions: getUrl() changes at runtime (dynamic config, rolling DNS).
+- Expected symptom: checks continue hitting old endpoint after config update.
+- Why its hard: only after runtime changes; looks like config not applied.
 - Static-analysis discoverability: Low.
-- Suggested detection: integration test toggling endpoint availability and expecting gauge changes.
-- Rank (1-5): Exercise value 5, Stealth 4, Scorability 4
+- Suggested detection: integration test that updates URL and expects new target.
+- Rank (1-5): Exercise 4, Stealth 5, Scorability 4
 
-### B15 - Treat equal versions as too low
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionsTable.java, checkVersions() ~71-77
-- Core relevance: connection table logs are operational signal.
-- Bug type: correctness (comparison boundary)
-- Proposed change: use <= instead of < when comparing versions.
-- Trigger conditions: current version equals required version.
-- Expected symptom: false error logs about version mismatch.
-- Why its hard: only a log, not a failure; easily ignored.
+### B45 - setDoOutput(true) for all requests before setRequestMethod
+- Location: hofund-core/.../connection/AbstractHofundBasicHttpConnection.java, testConnection() ~150-154
+- Core relevance: affects all HTTP checks.
+- Bug type: correctness / protocol behavior
+- Proposed change: add urlConn.setDoOutput(true) before setRequestMethod.
+- Trigger conditions: GET/HEAD requests on some JDKs (doOutput may switch method to POST).
+- Expected symptom: unexpected 405/400 on servers that disallow POST.
+- Why its hard: JDK-specific and endpoint-dependent.
+- Static-analysis discoverability: Low.
+- Suggested detection: integration test verifying method stays GET for doOutput=true.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 3
+
+### B46 - withRequiredVersion resets request method to GET
+- Location: hofund-core/.../connection/SimpleHofundHttpConnection.java, withRequiredVersion() ~95-97
+- Core relevance: affects HTTP checks with required versions.
+- Bug type: API contract drift
+- Proposed change: construct new instance using RequestMethod.GET regardless of existing method.
+- Trigger conditions: non-GET connections that also set required version.
+- Expected symptom: endpoint fails only when requiredVersion is set.
+- Why its hard: appears only for combined features.
+- Static-analysis discoverability: Low/Medium.
+- Suggested detection: unit test using POST + requiredVersion.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B47 - Cache tags in HofundConnection (stale detected_version)
+- Location: hofund-core/.../connection/HofundConnection.java, getTags() ~104-112
+- Core relevance: tags power graph IDs and version reporting.
+- Bug type: caching/invalidation
+- Proposed change: cache the tags list on first call and return it for all future calls.
+- Trigger conditions: detected_version changes over time.
+- Expected symptom: version tag never updates after startup.
+- Why its hard: status OK but version stale; subtle in dashboards.
+- Static-analysis discoverability: Low.
+- Suggested detection: integration test where target version changes.
+- Rank (1-5): Exercise 5, Stealth 4, Scorability 4
+
+### B48 - Source tag uses application version instead of name
+- Location: hofund-core/.../connection/HofundConnection.java, getTags() ~106-108
+- Core relevance: source tag ties edges to nodes.
+- Bug type: data integrity / ID mismatch
+- Proposed change: Tag.of("source", infoProvider.getApplicationVersion()).
+- Trigger conditions: always.
+- Expected symptom: edges no longer match node IDs; graph broken.
+- Why its hard: metrics still emitted; graph issues look like Grafana config.
 - Static-analysis discoverability: Medium.
-- Suggested detection: unit test for equal versions not logging error.
-- Rank (1-5): Exercise value 2, Stealth 3, Scorability 5
+- Suggested detection: unit test for source tag value.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 5
 
-### B16 - Exception path marks INACTIVE instead of DOWN
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionsTable.java, print() catch block ~53-65
-- Core relevance: table output used at startup to detect failures.
-- Bug type: error handling / correctness
-- Proposed change: use Status.INACTIVE in catch block.
-- Trigger conditions: connection function throws (timeouts, SQL errors).
-- Expected symptom: failures hidden as inactive; operators miss real outage.
-- Why its hard: only visible in connection table logs.
+### B49 - Preserve description case in toTargetTag
+- Location: hofund-core/.../connection/HofundConnection.java, toTargetTag() ~57-63
+- Core relevance: target tag drives graph node identity.
+- Bug type: data integrity
+- Proposed change: remove .toLowerCase() for description.
+- Trigger conditions: vendors described with mixed case (PostgreSQL vs postgresql).
+- Expected symptom: duplicate nodes for same DB vendor across environments.
+- Why its hard: only appears across mixed naming conventions.
+- Static-analysis discoverability: Low.
+- Suggested detection: integration test with same DB target, different case description.
+- Rank (1-5): Exercise 3, Stealth 4, Scorability 4
+
+### B50 - Edge ID omits type when description present
+- Location: hofund-core/.../connection/HofundConnection.java, getEdgeId() ~71-77
+- Core relevance: edge IDs must be unique across types.
+- Bug type: data integrity / collision
+- Proposed change: when description present, build id as appName + "-" + target + "_" + description (no type).
+- Trigger conditions: same target + description across different types.
+- Expected symptom: edge collisions and missing edges.
+- Why its hard: requires multi-type targets; no direct errors.
+- Static-analysis discoverability: Low.
+- Suggested detection: integration test with HTTP and QUEUE same target+desc.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B51 - Drop hyphens instead of converting to underscores
+- Location: hofund-core/.../connection/HofundConnection.java, getEnvVarName() ~139-143
+- Core relevance: env-based disablement is operationally important.
+- Bug type: config parsing
+- Proposed change: replace "-" with "" instead of "_".
+- Trigger conditions: targets containing "-".
+- Expected symptom: env var disablements silently ignored for dashed targets.
+- Why its hard: looks like user error; no warnings.
 - Static-analysis discoverability: Medium.
-- Suggested detection: unit test with failing connection function expecting DOWN.
-- Rank (1-5): Exercise value 3, Stealth 3, Scorability 5
+- Suggested detection: unit test for target "payment-api".
+- Rank (1-5): Exercise 3, Stealth 4, Scorability 4
 
-### B17 - Read only the first line of HTTP response
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java, parseResponseBody() ~42-52
-- Core relevance: version extraction for HTTP connections.
-- Bug type: edge-case input handling
-- Proposed change: return after the first readLine() to optimize.
-- Trigger conditions: pretty-printed JSON or multi-line responses.
-- Expected symptom: detected_version becomes UNKNOWN for some services.
-- Why its hard: depends on response formatting; minified JSON still works.
-- Static-analysis discoverability: Low.
-- Suggested detection: unit test with multi-line JSON body.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
+### B52 - Type tag uses enum name (uppercase)
+- Location: hofund-core/.../connection/HofundConnection.java, getTags() ~108-109
+- Core relevance: type tag used in dashboards/queries.
+- Bug type: API contract drift
+- Proposed change: Tag.of("type", getType().name()) instead of toString().
+- Trigger conditions: any deployment with dashboards expecting lowercase.
+- Expected symptom: dashboards/alerts miss series due to label mismatch.
+- Why its hard: looks like missing data rather than code bug.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test for type tag equals "http"/"database".
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 5
 
-### B18 - Search for "version" from the start of the body
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java, extractVersionFromResponse() ~64-76
-- Core relevance: version tags in metrics.
-- Bug type: correctness (parsing)
-- Proposed change: remove applicationIndex and search from 0.
-- Trigger conditions: response contains other "version" fields before application.version.
-- Expected symptom: wrong detected_version (for example build.version).
-- Why its hard: looks plausible; only manifests with extra fields.
-- Static-analysis discoverability: Low.
-- Suggested detection: unit test with JSON containing multiple "version" keys.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B19 - Skip parsing version for UP responses
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java, http(Status, HttpURLConnection) ~35-39
-- Core relevance: detected_version is part of core metrics tags.
+### B53 - Truncate HTTP response body to 512 chars
+- Location: hofund-core/.../connection/HofundConnectionResult.java, parseResponseBody() ~42-51
+- Core relevance: detected_version tag is core metadata.
 - Bug type: data integrity / performance optimization
-- Proposed change: if status == UP, return UNKNOWN without reading body.
-- Trigger conditions: any healthy HTTP connection with version info.
-- Expected symptom: detected_version always UNKNOWN despite valid responses.
-- Why its hard: status still UP; only version metrics degrade.
-- Static-analysis discoverability: Medium.
-- Suggested detection: integration test verifying version extraction when UP.
-- Rank (1-5): Exercise value 3, Stealth 3, Scorability 4
-
-### B20 - Compare versions lexicographically
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/Version.java, compareTo() ~33-65
-- Core relevance: required version enforcement in connection table.
-- Bug type: numeric precision / comparison
-- Proposed change: replace numeric split with String.compareTo().
-- Trigger conditions: versions with multi-digit parts (10.0 vs 2.0).
-- Expected symptom: false "version too low" or missed mismatch.
-- Why its hard: only shows when digits exceed 9; looks correct for small versions.
-- Static-analysis discoverability: Low/Medium.
-- Suggested detection: unit test comparing 2.10 vs 2.2.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 5
-
-### B21 - Treat UNKNOWN/N/A as equal instead of throwing
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/Version.java, compareTo() ~39-46
-- Core relevance: version checks gate alerting.
-- Bug type: correctness / error handling
-- Proposed change: when either version is unspecified, return 0 instead of throwing.
-- Trigger conditions: required version missing or unknown.
-- Expected symptom: checkVersions silently skips mismatches; no error logs.
-- Why its hard: behavior is absence of signal rather than a failure.
+- Proposed change: stop reading after 512 chars.
+- Trigger conditions: large JSON or version field after 512 chars.
+- Expected symptom: detected_version becomes UNKNOWN intermittently.
+- Why its hard: depends on response size/format.
 - Static-analysis discoverability: Low.
-- Suggested detection: unit test expecting IllegalArgumentException for UNKNOWN vs 1.0.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
+- Suggested detection: unit test with large response body.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
 
-### B22 - Ignore extra version segments
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/connection/Version.java, compareTo() ~52
-- Core relevance: version ordering determines error logs.
-- Bug type: correctness (boundary handling)
-- Proposed change: use Math.min instead of Math.max for length.
-- Trigger conditions: comparing 1.2 vs 1.2.1 or 2.0 vs 2.0.0.1.
-- Expected symptom: versions with extra segments compare as equal.
-- Why its hard: only shows with uneven segment counts.
-- Static-analysis discoverability: Low/Medium.
-- Suggested detection: unit test where 1.2.1 > 1.2.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 5
-
-### B23 - Lowercase DB product name before enum mapping
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DataSourceConnectionFactory.java, of() ~23-28
-- Core relevance: determines vendor-specific DB parsing and test queries.
-- Bug type: correctness (classification)
-- Proposed change: lowercase metaData.getDatabaseProductName() before DatabaseProductName.of.
-- Trigger conditions: any database; enum names are capitalized.
-- Expected symptom: all databases become NOT_RECOGNIZED, losing vendor-specific parsing.
-- Why its hard: still functional via UnknownDatasourceConnection; silent behavior change.
-- Static-analysis discoverability: Medium.
-- Suggested detection: unit test verifying PostgreSQLConnection is chosen for PostgreSQL.
-- Rank (1-5): Exercise value 4, Stealth 3, Scorability 4
-
-### B24 - Use `==` for string comparison in DatabaseProductName.of
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DatabaseProductName.java, of() ~17-21
-- Core relevance: vendor detection path.
-- Bug type: correctness (equality)
-- Proposed change: replace equals with `==` in the filter.
-- Trigger conditions: non-interned product names (most JDBC drivers).
-- Expected symptom: vendor detection fails; falls back to NOT_RECOGNIZED.
-- Why its hard: looks like micro-optimization; likely too easy unless direct test is removed.
-- Static-analysis discoverability: High.
-- Suggested detection: unit test for DatabaseProductName.of("PostgreSQL").
-- Rank (1-5): Exercise value 2, Stealth 2, Scorability 5
-
-### B25 - Deduplicate datasources by target only
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DataSourceConnectionsProvider.java, getConnections() ~35-43
-- Core relevance: determines which DB connections are exposed.
-- Bug type: data integrity / de-duplication
-- Proposed change: treat two DatasourceConnection as duplicates when target matches, ignoring url/vendor.
-- Trigger conditions: multiple DBs with same target name but different hosts.
-- Expected symptom: missing connection metrics for one datasource.
-- Why its hard: only surfaces in multi-datasource deployments.
+### B54 - Require a space in `"version": "`
+- Location: hofund-core/.../connection/HofundConnectionResult.java, extractVersionFromResponse() ~69-76
+- Core relevance: parsing version from JSON.
+- Bug type: input parsing / format assumptions
+- Proposed change: set versionKey to "\"version\": \"" (with space).
+- Trigger conditions: minified JSON with no spaces.
+- Expected symptom: detected_version UNKNOWN for many services.
+- Why its hard: depends on JSON formatting style.
 - Static-analysis discoverability: Low.
-- Suggested detection: integration test with two datasources same target, different URL.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 4
+- Suggested detection: unit test with minified JSON.
+- Rank (1-5): Exercise 3, Stealth 4, Scorability 4
 
-### B26 - Use `==` for result comparison in DB test
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DatasourceConnection.java, testConnection() ~54-55
-- Core relevance: DB health check is critical for hofund_connection.
-- Bug type: correctness (string comparison)
-- Proposed change: replace Objects.equals(resultSet.getString(1), "1") with `==`.
-- Trigger conditions: any DB check; string is not interned.
-- Expected symptom: DB connections always DOWN.
-- Why its hard: likely too easy; would be caught by existing tests if present.
-- Static-analysis discoverability: High (likely too easy unless the direct test is removed).
-- Suggested detection: unit/integration test that expects UP when query returns 1.
-- Rank (1-5): Exercise value 3, Stealth 2, Scorability 5
+### B55 - Use lastIndexOf("version") after applicationIndex
+- Location: hofund-core/.../connection/HofundConnectionResult.java, extractVersionFromResponse() ~69-75
+- Core relevance: detected_version tag accuracy.
+- Bug type: correctness (parsing)
+- Proposed change: use lastIndexOf(versionKey) from end of body.
+- Trigger conditions: JSON with both application.version and build.version.
+- Expected symptom: wrong detected_version (build version instead of app).
+- Why its hard: values look plausible.
+- Static-analysis discoverability: Low.
+- Suggested detection: unit test with multiple version keys.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
 
-### B27 - Set query timeout after executing query
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DatasourceConnection.java, testConnection() ~51-53
-- Core relevance: controls DB check latency and stability.
+### B56 - Always read errorStream instead of inputStream
+- Location: hofund-core/.../connection/HofundConnectionResult.java, parseResponseBody() ~42-53
+- Core relevance: detected_version tag accuracy.
+- Bug type: error handling
+- Proposed change: read urlConn.getErrorStream() unconditionally.
+- Trigger conditions: 2xx responses (errorStream null).
+- Expected symptom: detected_version UNKNOWN even when UP.
+- Why its hard: status OK; only version is wrong.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test with 200 response containing version.
+- Rank (1-5): Exercise 3, Stealth 4, Scorability 4
+
+### B57 - Remove try-with-resources in response parsing
+- Location: hofund-core/.../connection/HofundConnectionResult.java, parseResponseBody() ~42-56
+- Core relevance: repeated scrapes can leak resources.
+- Bug type: resource leak
+- Proposed change: remove try-with-resources and never close reader.
+- Trigger conditions: long-running service with frequent scrapes.
+- Expected symptom: gradual resource exhaustion or stalled connections.
+- Why its hard: delayed, load-dependent.
+- Static-analysis discoverability: Medium.
+- Suggested detection: load test with many scrapes and fd leak monitoring.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 3
+
+### B58 - Math.abs on status value
+- Location: hofund-core/.../connection/HofundConnectionMeter.java, bindTo() ~31-34
+- Core relevance: hofund_connection is primary health signal.
+- Bug type: numeric correctness
+- Proposed change: return Math.abs(status.getValue()).
+- Trigger conditions: INACTIVE status (-1).
+- Expected symptom: INACTIVE shows as UP (1).
+- Why its hard: looks like a healthy dependency.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test mapping INACTIVE to -1.
+- Rank (1-5): Exercise 4, Stealth 3, Scorability 5
+
+### B59 - Reuse tags from first connection for all gauges
+- Location: hofund-core/.../connection/HofundConnectionMeter.java, bindTo() ~30-34
+- Core relevance: tags identify each connection series.
+- Bug type: data integrity
+- Proposed change: compute tags once outside the loop and reuse for all gauges.
+- Trigger conditions: multiple connections configured.
+- Expected symptom: metrics collapse into one series with wrong tags.
+- Why its hard: only visible when multiple connections exist.
+- Static-analysis discoverability: Medium.
+- Suggested detection: integration test with two connections verifying distinct tags.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B60 - Remove unspecified-version guard in checkVersions
+- Location: hofund-core/.../connection/HofundConnectionsTable.java, checkVersions() ~71-75
+- Core relevance: startup table used for readiness diagnostics.
+- Bug type: error handling
+- Proposed change: delete the isUnspecified() early return.
+- Trigger conditions: required version N/A or UNKNOWN.
+- Expected symptom: compareTo throws, catch block logs DOWN and UNKNOWN.
+- Why its hard: appears as intermittent connection failure.
+- Static-analysis discoverability: Low.
+- Suggested detection: unit test with UNKNOWN required version.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B61 - Re-run connection check for version
+- Location: hofund-core/.../connection/HofundConnectionsTable.java, print() ~39-52
+- Core relevance: connection checks run at startup.
 - Bug type: reliability/perf
-- Proposed change: move statement.setQueryTimeout(...) to after executeQuery().
-- Trigger conditions: slow or hung DB connections.
-- Expected symptom: checks hang longer than expected; thread pool starvation.
-- Why its hard: only under DB slowness; no obvious code error.
-- Static-analysis discoverability: Low.
-- Suggested detection: integration test with delayed DB response and timeout assertion.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 4
-
-### B28 - Cache a JDBC Connection in DatasourceConnection
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DatasourceConnection.java, testConnection() ~49-63
-- Core relevance: DB checks run frequently under prometheus scrape.
-- Bug type: concurrency / resource leak
-- Proposed change: store Connection in a field and reuse across checks instead of try-with-resources.
-- Trigger conditions: concurrent scrapes or connection close by pool.
-- Expected symptom: intermittent SQLExceptions, leaked connections, or stale results.
-- Why its hard: nondeterministic and load-dependent.
-- Static-analysis discoverability: Medium.
-- Suggested detection: load test with concurrent scrapes; leak detection in pool.
-- Rank (1-5): Exercise value 5, Stealth 4, Scorability 3
-
-### B29 - Off-by-one when parsing PostgreSQL DB name
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/postgresql/PostgreSQLConnection.java, constructor ~26-32
-- Core relevance: target name drives graph identity and metrics.
-- Bug type: correctness (string slicing)
-- Proposed change: set `to = url.lastIndexOf("?") - 1` when query exists.
-- Trigger conditions: JDBC URL with query parameters.
-- Expected symptom: target missing last character; graph IDs mismatch.
-- Why its hard: only with query params; looks like similar name.
-- Static-analysis discoverability: Low.
-- Suggested detection: unit test for URL with query string.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B30 - Use first ":" instead of last ":" in H2 target parsing
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/h2/H2Connection.java, constructor ~26-29
-- Core relevance: target name for H2 DB.
-- Bug type: correctness (string parsing)
-- Proposed change: use url.indexOf(':') instead of lastIndexOf(':').
-- Trigger conditions: typical H2 URLs (jdbc:h2:mem:test).
-- Expected symptom: target becomes "h2" or "mem" instead of db name.
-- Why its hard: only shows in graph/metrics labels; DB still UP.
-- Static-analysis discoverability: Low.
-- Suggested detection: unit test for target derivation from H2 URL.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B31 - Derive Oracle target from URL instead of username
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/oracle/OracleConnection.java, constructor ~25-28
-- Core relevance: target name used for ID and graph nodes.
-- Bug type: correctness / data integrity
-- Proposed change: parse target from URL segment instead of metadata username.
-- Trigger conditions: Oracle deployments with multiple schemas or shared host.
-- Expected symptom: collisions across schemas; metrics merge.
-- Why its hard: only in multi-schema or shared Oracle hosts.
-- Static-analysis discoverability: Low.
-- Suggested detection: integration test with two Oracle schemas same host.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B32 - Use split("?") when stripping JDBC query params
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/UnknownDatasourceConnection.java, deriveTarget() ~88-92
-- Core relevance: fallback path for unknown datasources.
-- Bug type: input parsing / regex pitfall
-- Proposed change: replace split("\\?") with split("?").
-- Trigger conditions: JDBC URL that includes "?" parameters.
-- Expected symptom: noQuery becomes empty or malformed; target becomes "unknown".
-- Why its hard: only affects unknown datasource path; regex bug is subtle.
-- Static-analysis discoverability: Low.
-- Suggested detection: unit test for deriveTarget with JDBC URL containing query params.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B33 - Log JDBC URL and username at INFO
-- Location: /workspace/hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/UnknownDatasourceConnection.java, constructor ~26-45
-- Core relevance: runs in fallback path but still in core DB discovery.
-- Bug type: security (information disclosure)
-- Proposed change: add log.info(...) with discoveredUrl and discoveredUser.
-- Trigger conditions: any datasource where URL includes credentials or sensitive hostnames.
-- Expected symptom: sensitive information in logs.
-- Why its hard: not a functional failure; only visible in logs and audits.
-- Static-analysis discoverability: Medium.
-- Suggested detection: security review or log-scrubbing tests.
-- Rank (1-5): Exercise value 3, Stealth 3, Scorability 4
-
-### B34 - Node ID tag uses getTarget() instead of toTargetTag()
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/graph/node/HofundNodeMeter.java, tagsForConnection() ~82-86
-- Core relevance: node IDs must match edge target tags.
-- Bug type: correctness / graph integrity
-- Proposed change: Tag.of("id", connection.getTarget()).
-- Trigger conditions: DB/QUEUE connections with description/vendor.
-- Expected symptom: nodes not matching edges; graph partial.
-- Why its hard: only in graph; connection metrics still look ok.
-- Static-analysis discoverability: Low.
-- Suggested detection: grafana node-graph snapshot test.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 4
-
-### B35 - Collision check compares against application version
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/graph/node/HofundNodeMeter.java, checkIdCollision() ~51-53
-- Core relevance: prevents ID collisions that break graph.
-- Bug type: correctness (logic)
-- Proposed change: compare ids.contains(infoProvider.getApplicationVersion()) instead of name.
-- Trigger conditions: when a connection target matches the app name.
-- Expected symptom: collision goes undetected; nodes merged.
-- Why its hard: only if names overlap; exception removed.
+- Proposed change: call connection.getFun().get().getConnection() again inside checkVersions instead of using connectionResult.
+- Trigger conditions: slow or flaky dependencies.
+- Expected symptom: duplicate network calls; inconsistent status vs version.
+- Why its hard: only visible under load or flakiness.
 - Static-analysis discoverability: Low/Medium.
-- Suggested detection: unit test where target equals app name.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
+- Suggested detection: unit test asserting single connection invocation.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 3
 
-### B36 - Edge collision check uses toTargetTag instead of edgeId
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/graph/edge/HofundEdgeMeter.java, checkIdCollision() ~50-55
-- Core relevance: ensures unique edge IDs across the graph.
-- Bug type: data integrity
-- Proposed change: compare only connection.toTargetTag() for uniqueness.
-- Trigger conditions: multiple edges from different sources to same target.
-- Expected symptom: collisions not detected; edges overwritten.
-- Why its hard: only visible in graph; subtle in metrics.
-- Static-analysis discoverability: Low.
-- Suggested detection: integration test with two services calling same target.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
-
-### B37 - Stop lowercasing application name
-- Location: /workspace/hofund-spring-boot-autoconfigure/src/main/java/dev/logchange/hofund/info/springboot/autoconfigure/HofundInfoAutoConfiguration.java, getApplicationName() ~37-39
-- Core relevance: app name is a core tag and graph ID.
-- Bug type: correctness / config contract drift
-- Proposed change: return properties.getApplication().getName() without toLowerCase().
-- Trigger conditions: app names with uppercase or mixed case.
-- Expected symptom: graph IDs and target matching fail; env-var name mismatches.
-- Why its hard: only manifests with case-sensitive comparisons across modules.
+### B62 - Empty version becomes UNKNOWN instead of N/A
+- Location: hofund-core/.../connection/Version.java, of() ~14-18
+- Core relevance: version semantics used for comparisons/logging.
+- Bug type: data semantics
+- Proposed change: return UNKNOWN for null/empty instead of NOT_APPLICABLE.
+- Trigger conditions: DB connections or missing version.
+- Expected symptom: version logs change behavior; comparisons behave differently.
+- Why its hard: manifests as subtle changes in logs.
 - Static-analysis discoverability: Medium.
-- Suggested detection: integration test asserting lowercased id tag.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 4
+- Suggested detection: unit test for Version.of("") == N/A.
+- Rank (1-5): Exercise 3, Stealth 3, Scorability 5
 
-### B38 - Swap application_name and application_version tags
-- Location: /workspace/hofund-core/src/main/java/dev/logchange/hofund/info/HofundInfoMeter.java, tags() ~36-38
-- Core relevance: hofund_info is a key metric for dashboards.
+### B63 - Missing segments treated as -1 (1.2 < 1.2.0)
+- Location: hofund-core/.../connection/Version.java, compareTo() ~52-56
+- Core relevance: version ordering drives warnings.
+- Bug type: correctness (boundary handling)
+- Proposed change: use -1 when part is missing rather than 0.
+- Trigger conditions: comparing 1.2 to 1.2.0 or 2.0 to 2.0.1.
+- Expected symptom: false "too low" warnings.
+- Why its hard: only for uneven version lengths.
+- Static-analysis discoverability: Low.
+- Suggested detection: unit test for 1.2 == 1.2.0.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 5
+
+### B64 - Parse version part with Integer.parseInt(part)
+- Location: hofund-core/.../connection/Version.java, parseInt() ~68-79
+- Core relevance: version comparisons are core correctness.
+- Bug type: robustness / parsing
+- Proposed change: replace numeric prefix parsing with Integer.parseInt(part).
+- Trigger conditions: versions with suffixes like "1.0-RC1" or "1-SNAPSHOT".
+- Expected symptom: IllegalArgumentException from compareTo; table logs DOWN.
+- Why its hard: only affects pre-release versions.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test with "1.0-RC1".
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B65 - Treat UNKNOWN/N/A as greater than any regular version
+- Location: hofund-core/.../connection/Version.java, compareTo() ~39-46
+- Core relevance: version checks should skip unspecified values.
+- Bug type: correctness / error handling
+- Proposed change: if unspecified, return 1 instead of throwing or equal.
+- Trigger conditions: required version unspecified.
+- Expected symptom: version checks never flag mismatches (UNKNOWN wins).
+- Why its hard: absence of error looks like success.
+- Static-analysis discoverability: Low.
+- Suggested detection: unit test where UNKNOWN should not satisfy 1.0.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B66 - Collision check uses getTarget instead of toTargetTag
+- Location: hofund-core/.../graph/node/HofundNodeMeter.java, checkIdCollision() ~44-49
+- Core relevance: node IDs must be unique for graph.
 - Bug type: data integrity
-- Proposed change: set application_name tag to provider.getApplicationVersion() and vice versa.
+- Proposed change: compare ids against connection.getTarget() only.
+- Trigger conditions: multiple DB connections with same target but different vendor/description.
+- Expected symptom: collisions not detected; nodes overwritten.
+- Why its hard: only in multi-DB setups.
+- Static-analysis discoverability: Low.
+- Suggested detection: integration test with two DB vendors same target.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B67 - Type tag uses enum name (uppercase)
+- Location: hofund-core/.../graph/node/HofundNodeMeter.java, tagsForConnection() ~92-93
+- Core relevance: type tags drive Grafana node-graph queries.
+- Bug type: API contract drift
+- Proposed change: Tag.of("type", connection.getType().name()).
+- Trigger conditions: dashboards expecting lowercase type.
+- Expected symptom: missing nodes in graph filters.
+- Why its hard: looks like dashboard misconfig.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test asserting type tag "http"/"database".
+- Rank (1-5): Exercise 3, Stealth 4, Scorability 5
+
+### B68 - Subtitle drops type when description present
+- Location: hofund-core/.../graph/node/HofundNodeMeter.java, tagsForConnection() ~87-90
+- Core relevance: node subtitles are used to differentiate nodes.
+- Bug type: data integrity / UI correctness
+- Proposed change: use description only, removing type from subtitle.
+- Trigger conditions: DB/QUEUE connections with descriptions.
+- Expected symptom: nodes become ambiguous; operator confusion.
+- Why its hard: visual-only regression.
+- Static-analysis discoverability: Low.
+- Suggested detection: snapshot test of grafana node-graph tags.
+- Rank (1-5): Exercise 2, Stealth 4, Scorability 3
+
+### B69 - Info node id uses application version
+- Location: hofund-core/.../graph/node/HofundNodeMeter.java, tagsForInfo() ~73-76
+- Core relevance: the main node id ties edges to the app.
+- Bug type: correctness / ID mismatch
+- Proposed change: Tag.of("id", infoProvider.getApplicationVersion()).
+- Trigger conditions: always.
+- Expected symptom: edges do not attach to the app node.
+- Why its hard: graph breaks silently.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test for id == application name.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 5
+
+### B70 - Edge collision check is case-insensitive
+- Location: hofund-core/.../graph/edge/HofundEdgeMeter.java, checkIdCollision() ~50-54
+- Core relevance: prevents duplicate edge IDs.
+- Bug type: data integrity
+- Proposed change: compare ids using toLowerCase() on both sides.
+- Trigger conditions: targets that differ only by case.
+- Expected symptom: false positives, startup errors in some envs.
+- Why its hard: only with case-sensitive naming.
+- Static-analysis discoverability: Low.
+- Suggested detection: unit test with two connections differing by case.
+- Rank (1-5): Exercise 3, Stealth 4, Scorability 4
+
+### B71 - Reuse tags from last connection for all edges
+- Location: hofund-core/.../graph/edge/HofundEdgeMeter.java, bindTo() ~41-44
+- Core relevance: edge tags determine graph integrity.
+- Bug type: data integrity
+- Proposed change: compute tags once outside loop and reuse.
+- Trigger conditions: multiple connections.
+- Expected symptom: all edges share the same tags; missing edges.
+- Why its hard: only visible with multiple edges.
+- Static-analysis discoverability: Medium.
+- Suggested detection: integration test with two edges and distinct tags.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B72 - Lowercase application name with default locale
+- Location: hofund-core/.../info/HofundInfoMeter.java, tags() ~36-38
+- Core relevance: app id must match other tags and env names.
+- Bug type: locale/timezone sensitivity
+- Proposed change: apply toLowerCase() without Locale.ROOT.
+- Trigger conditions: Turkish locale, names containing "I".
+- Expected symptom: id mismatch in tags and env var naming.
+- Why its hard: only in specific locales.
+- Static-analysis discoverability: Low.
+- Suggested detection: unit test with Turkish locale.
+- Rank (1-5): Exercise 4, Stealth 5, Scorability 4
+
+### B73 - application_version tag uses application type
+- Location: hofund-core/.../info/HofundInfoMeter.java, tags() ~36-38
+- Core relevance: hofund_info labels are fundamental to dashboards.
+- Bug type: data integrity
+- Proposed change: Tag.of("application_version", provider.getApplicationType()).
 - Trigger conditions: any deployment.
-- Expected symptom: labels are wrong; dashboards and alerts mislabel services.
-- Why its hard: values look plausible unless checked carefully.
+- Expected symptom: version label shows "app"/"backend" instead of version.
+- Why its hard: values look plausible.
 - Static-analysis discoverability: Medium.
-- Suggested detection: unit test verifying tag values from provider.
-- Rank (1-5): Exercise value 3, Stealth 3, Scorability 5
+- Suggested detection: unit test for application_version tag.
+- Rank (1-5): Exercise 3, Stealth 3, Scorability 5
 
-### B39 - Reverse precedence in defaultIfEmpty
-- Location: /workspace/hofund-spring-boot-autoconfigure/src/main/java/dev/logchange/hofund/git/springboot/autoconfigure/HofundGitInfoAutoConfiguration.java, defaultIfEmpty() ~65-71
-- Core relevance: git metadata tags used widely in dashboards.
-- Bug type: config/override handling
-- Proposed change: if val is empty return val, else return defaultVal (reverse logic).
-- Trigger conditions: custom hofund.git-info.* properties set by user.
-- Expected symptom: user overrides ignored; tags show defaults.
-- Why its hard: looks like user misconfiguration; no crashes.
+### B74 - Truncate commit_id to 7 chars without length check
+- Location: hofund-core/.../git/HofundGitInfoMeter.java, tags() ~36
+- Core relevance: git metadata is core to debugging deployments.
+- Bug type: robustness
+- Proposed change: provider.getCommitId().substring(0, 7) without guard.
+- Trigger conditions: short/empty commit_id (local builds).
+- Expected symptom: runtime exception; git info metric missing. Likely too easy unless test removed.
+- Why its hard: only in non-standard builds.
 - Static-analysis discoverability: Medium.
-- Suggested detection: unit test that overrides git-info properties and expects them to win.
-- Rank (1-5): Exercise value 4, Stealth 4, Scorability 5
+- Suggested detection: unit test with empty commit_id.
+- Rank (1-5): Exercise 3, Stealth 2, Scorability 4
 
-### B40 - Normalize build_time to local time without offset
-- Location: /workspace/hofund-spring-boot-autoconfigure/src/main/java/dev/logchange/hofund/git/springboot/autoconfigure/HofundDefaultGitInfoProperties.java, getBuildTime() ~36-37
-- Core relevance: build_time tag used for debugging deployments.
-- Bug type: time/date/timezone
-- Proposed change: parse git.build.time to LocalDateTime and return without timezone/offset.
-- Trigger conditions: build_time contains offset or Z; deployments across timezones.
-- Expected symptom: build_time appears shifted; hard to correlate with other systems.
-- Why its hard: only visible when comparing across timezones; looks like input issue.
+### B75 - build_time tag uses build_host
+- Location: hofund-core/.../git/HofundGitInfoMeter.java, tags() ~38-40
+- Core relevance: build_time used for timeline correlation.
+- Bug type: data integrity
+- Proposed change: Tag.of("build_time", provider.getBuildHost()).
+- Trigger conditions: always.
+- Expected symptom: build_time label shows hostnames.
+- Why its hard: labels still look like strings; not obviously wrong.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test for build_time tag value.
+- Rank (1-5): Exercise 3, Stealth 3, Scorability 5
+
+### B76 - Swap runtime_name and runtime_version tags
+- Location: hofund-core/.../java/HofundJavaInfoMeter.java, tags() ~42-44
+- Core relevance: Java info supports runtime debugging.
+- Bug type: data integrity
+- Proposed change: set runtime_name to info.getRuntime().getVersion() and runtime_version to getName().
+- Trigger conditions: any deployment.
+- Expected symptom: runtime tags inverted; looks plausible.
+- Why its hard: values are both strings; not obvious.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test for runtime tag values.
+- Rank (1-5): Exercise 3, Stealth 3, Scorability 5
+
+### B77 - Swap jvm_vendor and vendor_name tags
+- Location: hofund-core/.../java/HofundJavaInfoMeter.java, tags() ~39-47
+- Core relevance: JVM vendor metadata.
+- Bug type: data integrity
+- Proposed change: use info.getJvm().getVendor() for vendor_name.
+- Trigger conditions: any deployment.
+- Expected symptom: vendor labels inconsistent across metrics.
+- Why its hard: values are similar; may go unnoticed.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test with known vendor values.
+- Rank (1-5): Exercise 2, Stealth 3, Scorability 4
+
+### B78 - Remove toLowerCase in OS detection
+- Location: hofund-core/.../os/HofundOsInfo.java, getOsFamily/getManufacturer() ~31-74
+- Core relevance: OS tags used for fleet diagnostics.
+- Bug type: input normalization
+- Proposed change: remove osName = osName.toLowerCase().
+- Trigger conditions: os.name with uppercase (most systems).
+- Expected symptom: OS family falls back to raw name or Unknown manufacturer.
+- Why its hard: only visible in labels; no failures.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test with "Linux" and "Windows".
+- Rank (1-5): Exercise 3, Stealth 3, Scorability 5
+
+### B79 - Manufacturer derived from os.arch instead of os.name
+- Location: hofund-core/.../os/HofundOsInfo.java, get() ~19-28
+- Core relevance: OS metadata tags.
+- Bug type: data integrity
+- Proposed change: pass osArch into getManufacturer().
+- Trigger conditions: any deployment.
+- Expected symptom: manufacturer becomes "Unknown".
+- Why its hard: labels look plausible; no failures.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test expecting "Microsoft" for Windows.
+- Rank (1-5): Exercise 2, Stealth 3, Scorability 4
+
+### B80 - Swap name and version tags in web server info
+- Location: hofund-core/.../web/HofundWebServerInfoMeter.java, tags() ~36-38
+- Core relevance: web server info used for diagnostics.
+- Bug type: data integrity
+- Proposed change: Tag.of("name", info.getVersion()) and Tag.of("version", info.getName()).
+- Trigger conditions: any deployment.
+- Expected symptom: name shows "9.0.x" and version shows "Apache Tomcat".
+- Why its hard: still plausible strings.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test verifying tag values.
+- Rank (1-5): Exercise 3, Stealth 3, Scorability 5
+
+### B81 - Lowercase web server name/version on creation
+- Location: hofund-core/.../web/HofundWebServerInfo.java, create() ~20-23
+- Core relevance: web server tag identity.
+- Bug type: data normalization
+- Proposed change: return new HofundWebServerInfo(name.toLowerCase(), version.toLowerCase()).
+- Trigger conditions: any deployment.
+- Expected symptom: unexpected label changes; case-sensitive dashboards break.
+- Why its hard: only visible in label matching.
 - Static-analysis discoverability: Low.
-- Suggested detection: unit test with known build_time and expected offset preserved.
-- Rank (1-5): Exercise value 3, Stealth 4, Scorability 4
+- Suggested detection: unit test for name casing.
+- Rank (1-5): Exercise 2, Stealth 3, Scorability 4
 
-# Top 10 recommended set
-- B14 - Stale connection status caching in core metric; high impact and stealth.
-- B25 - Datasource de-dup by target only; subtle data loss in multi-DS setups.
-- B01 - 4xx treated as UP; misleading health signal with realistic triggers.
-- B37 - Case-sensitive app name mismatch; cross-module and hard to spot.
-- B20 - Lexicographic version compare; classic numeric precision trap.
-- B27 - Query timeout set too late; reliability/perf under load.
-- B39 - Git info override precedence reversed; config drift hard to spot.
-- B40 - build_time timezone normalization; time drift across systems.
-- B29 - PostgreSQL off-by-one parsing; edge-case string bug.
-- B33 - JDBC URL logging at INFO; security training value.
+### B82 - Silently pad/truncate rows in AsciiTable.addRow
+- Location: hofund-core/.../AsciiTable.java, addRow() ~18-22
+- Core relevance: connection table output at startup.
+- Bug type: data integrity / presentation
+- Proposed change: if columns length differs, pad/truncate instead of throwing.
+- Trigger conditions: callers pass wrong number of columns.
+- Expected symptom: misaligned table with shifted columns.
+- Why its hard: only visible in logs; no exception to highlight bug.
+- Static-analysis discoverability: Low.
+- Suggested detection: unit test with incorrect column count.
+- Rank (1-5): Exercise 2, Stealth 4, Scorability 3
+
+### B83 - Column widths based on headers only
+- Location: hofund-core/.../AsciiTable.java, printTable() ~34-38
+- Core relevance: connection table readability.
+- Bug type: presentation correctness
+- Proposed change: remove loop that updates columnWidths from rows.
+- Trigger conditions: any row value longer than header.
+- Expected symptom: truncated or misaligned columns in logs.
+- Why its hard: only visual; not caught by tests.
+- Static-analysis discoverability: Low.
+- Suggested detection: snapshot test of table rendering.
+- Rank (1-5): Exercise 2, Stealth 4, Scorability 3
+
+### B84 - Last column padded with width-1
+- Location: hofund-core/.../AsciiTable.java, printRow() ~58-60
+- Core relevance: connection table output.
+- Bug type: off-by-one (formatting)
+- Proposed change: padRight(row.get(i), columnWidths[i] - 1) for last column.
+- Trigger conditions: any row.
+- Expected symptom: subtle alignment drift on last column.
+- Why its hard: visual-only and easy to miss.
+- Static-analysis discoverability: Low.
+- Suggested detection: golden file test for table output.
+- Rank (1-5): Exercise 2, Stealth 4, Scorability 3
+
+### B85 - emptyIfNull returns literal "null"
+- Location: hofund-core/.../StringUtils.java, emptyIfNull() ~5-10
+- Core relevance: used in info tags and DB metadata.
+- Bug type: data integrity
+- Proposed change: return "null" instead of empty string.
+- Trigger conditions: any null vendor/version fields.
+- Expected symptom: labels contain "null" instead of empty.
+- Why its hard: looks like real value; no errors.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test for emptyIfNull(null) == "".
+- Rank (1-5): Exercise 3, Stealth 4, Scorability 5
+
+### B86 - isEmpty returns false for null
+- Location: hofund-core/.../StringUtils.java, isEmpty() ~13-18
+- Core relevance: used in tag and description logic.
+- Bug type: correctness / null handling
+- Proposed change: return false when description == null.
+- Trigger conditions: null description values.
+- Expected symptom: null treated as non-empty; tags built with nulls.
+- Why its hard: only for nulls; errors show in tags.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test for isEmpty(null) == true.
+- Rank (1-5): Exercise 3, Stealth 3, Scorability 5
+
+### B87 - EnvProvider lowercases env var name
+- Location: hofund-core/.../EnvProvider.java, SystemEnvProvider.getEnv() ~9-11
+- Core relevance: env-based disablement of connection checks.
+- Bug type: config parsing
+- Proposed change: System.getenv(name.toLowerCase()).
+- Trigger conditions: environment variables with uppercase names (standard).
+- Expected symptom: disable env vars never match on Linux/Unix.
+- Why its hard: looks like env misconfiguration.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test with mock EnvProvider.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B88 - RequestHeader.of swaps name and value
+- Location: hofund-core/.../connection/RequestHeader.java, of() ~12-14
+- Core relevance: HTTP checks rely on headers for auth.
+- Bug type: correctness
+- Proposed change: new RequestHeader(value, name).
+- Trigger conditions: any custom headers.
+- Expected symptom: auth failures, but only when headers are used.
+- Why its hard: only headered connections fail; looks like auth issue.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test verifying header name/value on connection.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 4
+
+### B89 - RequestMethod.HEAD returns "GET"
+- Location: hofund-core/.../connection/RequestMethod.java, enum constant ~7-9
+- Core relevance: HTTP checks for HEAD should not fetch body.
+- Bug type: correctness / API drift
+- Proposed change: set HEAD("GET").
+- Trigger conditions: when users configure HEAD.
+- Expected symptom: servers may reject GET or respond differently.
+- Why its hard: only on HEAD usage; subtle performance impact.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test asserting HEAD maps to "HEAD".
+- Rank (1-5): Exercise 3, Stealth 3, Scorability 4
+
+### B90 - Type.toString returns uppercase name()
+- Location: hofund-core/.../connection/Type.java, toString() ~17-19
+- Core relevance: type tag used widely in queries.
+- Bug type: API contract drift
+- Proposed change: return name() instead of lowercase name.
+- Trigger conditions: any deployment with dashboards expecting lowercase.
+- Expected symptom: missing metrics in dashboards due to label mismatch.
+- Why its hard: looks like missing data rather than code bug.
+- Static-analysis discoverability: Medium.
+- Suggested detection: unit test for type tag values.
+- Rank (1-5): Exercise 4, Stealth 4, Scorability 5
+
+# Top 10 recommended set (from B41-B90)
+- B44 - Stale cached URL; core health checks ignore dynamic config changes.
+- B47 - Cached tags lead to stale detected_version across the system.
+- B53 - Response truncation causes intermittent UNKNOWN versions.
+- B56 - errorStream-only parsing hides version on healthy responses.
+- B58 - Math.abs status hides INACTIVE; subtle alerting break.
+- B60 - compareTo exception path masks real issues as DOWN.
+- B64 - parseInt throws on pre-release versions; hard to detect.
+- B66 - Node collision check misses duplicates; graph integrity issues.
+- B70 - Edge collision case-insensitive; rare and confusing failures.
+- B72 - Locale-sensitive lowercasing causes ID mismatch only in some locales.
 
 # Instances (I01-I05)
-Each instance mixes correctness, config, parsing, and reliability/perf issues and spreads higher-ranked bugs.
+Top 40 selected from B41-B90 (excluding: B74, B75, B77, B79, B81, B82, B83, B84, B86, B89).
+Each instance mixes correctness, parsing, config, and data-integrity issues.
 
-- I01: B14, B25, B07, B15, B30, B34, B19, B21
-- I02: B01, B37, B06, B11, B23, B32, B12, B03
-- I03: B20, B27, B02, B08, B17, B36, B24, B31
-- I04: B39, B40, B05, B10, B18, B22, B35, B16
-- I05: B29, B33, B04, B09, B13, B26, B28, B38
+- I01: B41, B44, B49, B53, B58, B63, B66, B87
+- I02: B42, B45, B47, B51, B54, B59, B68, B85
+- I03: B43, B46, B50, B55, B60, B64, B69, B80
+- I04: B48, B52, B56, B61, B65, B70, B72, B90
+- I05: B57, B62, B67, B71, B73, B76, B78, B88
