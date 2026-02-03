@@ -1,60 +1,40 @@
 {
-  "criteria": [
+  "upload_directory": "/tmp/files/",
+  "output_directory": "/tmp/outputs/",
+  "system_prompt": "You are an expert code reviewer. Analyze the provided codebase for bugs, security issues, and correctness problems. Provide actionable feedback. All files are located in /tmp/files",
+  "task_prompt": "You are an expert code reviewer. Your task is to analyze the hofund codebase. This Java/Spring library exposes application, connection, graph, and git metadata via Micrometer/Prometheus and includes datasource and HTTP connection checks. Identify subtle bugs, security regressions, data consistency issues, and logic flaws. Focus on issues detectable via static analysis. Write your findings to /tmp/outputs/review.md.",
+  "rubric": [
     {
-      "id": "B01",
-      "weight": 1,
-      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java",
-      "location": "AbstractHofundBasicHttpConnection#testConnection",
-      "criterion": "HTTP success is limited to 2xx only; 3xx responses are treated as DOWN."
+      "criterion": "Identifies in hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java (testConnection) that HTTP success is limited to 2xx only, causing 3xx redirect responses to be treated as DOWN",
+      "weight": 1
     },
     {
-      "id": "B02",
-      "weight": 1,
-      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java",
-      "location": "AbstractHofundBasicHttpConnection#testConnection",
-      "criterion": "Read timeout is set using the connect timeout value instead of the read timeout."
+      "criterion": "Identifies in hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java (testConnection) that read timeout is set using the connect timeout value instead of the read timeout",
+      "weight": 1
     },
     {
-      "id": "B03",
-      "weight": 1,
-      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java",
-      "location": "HofundConnectionResult#extractVersionFromResponse",
-      "criterion": "Version extraction uses the first \"version\" key without anchoring to the \"application\" object."
+      "criterion": "Identifies in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java (extractVersionFromResponse) that version extraction uses the first \"version\" key without anchoring to the \"application\" object",
+      "weight": 1
     },
     {
-      "id": "B04",
-      "weight": 1,
-      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java",
-      "location": "HofundConnection#getEnvVarName",
-      "criterion": "Hyphens in target names are removed rather than converted to underscores when building env var names."
+      "criterion": "Identifies in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java (getEnvVarName) that hyphens in target names are removed rather than converted to underscores when building env var names",
+      "weight": 1
     },
     {
-      "id": "B05",
-      "weight": 1,
-      "file": "hofund-core/src/main/java/dev/logchange/hofund/graph/node/HofundNodeMeter.java",
-      "location": "HofundNodeMeter#checkIdCollision",
-      "criterion": "ID collision check iterates connections in parallel over a non-thread-safe list."
+      "criterion": "Identifies in hofund-core/src/main/java/dev/logchange/hofund/graph/node/HofundNodeMeter.java (checkIdCollision) that ID collision checking iterates connections in parallel over a non-thread-safe list",
+      "weight": 1
     },
     {
-      "id": "B06",
-      "weight": 1,
-      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionMeter.java",
-      "location": "HofundConnectionMeter#bindTo",
-      "criterion": "Gauge is registered with a constant precomputed status value rather than querying live connection status."
+      "criterion": "Identifies in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionMeter.java (bindTo) that the gauge is registered with a constant precomputed status value instead of querying live connection status",
+      "weight": 1
     },
     {
-      "id": "B07",
-      "weight": 1,
-      "file": "hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DataSourceConnectionFactory.java",
-      "location": "DataSourceConnectionFactory#of",
-      "criterion": "Datasource metadata connection is not closed after use."
+      "criterion": "Identifies in hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DataSourceConnectionFactory.java (of) that the datasource metadata connection is not closed after use",
+      "weight": 1
     },
     {
-      "id": "B08",
-      "weight": 1,
-      "file": "hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DatasourceConnection.java",
-      "location": "DatasourceConnection#testConnection",
-      "criterion": "Query timeout is multiplied by 1000, treating seconds as milliseconds and vastly increasing timeout."
+      "criterion": "Identifies in hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DatasourceConnection.java (testConnection) that query timeout is multiplied by 1000, treating seconds as milliseconds and vastly increasing timeout",
+      "weight": 1
     }
   ]
 }
