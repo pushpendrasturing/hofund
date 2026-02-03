@@ -48,10 +48,10 @@ public class HofundEdgeMeter implements MeterBinder {
         List<String> ids = new LinkedList<>();
 
         connections.forEach(connection -> {
-            if (ids.contains(connection.getEdgeId(infoProvider))) {
+            if (ids.contains(connection.toTargetTag())) {
                 throw new IllegalArgumentException("Connection edge id must be unique! Connection edge id is: " + connection.getEdgeId(infoProvider) + " and already defined connection edge ids are: " + ids);
             }
-            ids.add(connection.getEdgeId(infoProvider));
+            ids.add(connection.toTargetTag());
         });
 
     }

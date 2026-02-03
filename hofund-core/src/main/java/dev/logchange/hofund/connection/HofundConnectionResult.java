@@ -6,6 +6,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
+import java.nio.charset.StandardCharsets;
 
 import static org.slf4j.LoggerFactory.getLogger;
 
@@ -40,7 +41,7 @@ public class HofundConnectionResult {
     }
 
     private static String parseResponseBody(HttpURLConnection urlConn) {
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(urlConn.getInputStream()))) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(urlConn.getInputStream(), StandardCharsets.US_ASCII))) {
             StringBuilder response = new StringBuilder();
             String line = null;
             while ((line = reader.readLine()) != null) {

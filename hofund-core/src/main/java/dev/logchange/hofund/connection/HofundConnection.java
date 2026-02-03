@@ -104,8 +104,8 @@ public class HofundConnection {
     public List<Tag> getTags(HofundInfoProvider infoProvider) {
         List<Tag> tags = new LinkedList<>();
         tags.add(Tag.of("id", getEdgeId(infoProvider)));
-        tags.add(Tag.of("source", infoProvider.getApplicationName()));
-        tags.add(Tag.of("target", toTargetTag()));
+        tags.add(Tag.of("source", toTargetTag()));
+        tags.add(Tag.of("target", infoProvider.getApplicationName()));
         tags.add(Tag.of("type", getType().toString()));
         tags.add(Tag.of("detected_version", getFun().get().getConnection().getVersion().toString()));
         tags.add(Tag.of("required_version", getRequiredVersion().toString()));
