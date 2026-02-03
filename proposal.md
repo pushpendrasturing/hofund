@@ -181,20 +181,152 @@ Connection checks (HTTP/DB) and version parsing feed both metrics and the ASCII 
 - **Suggested detection:** Unit test comparing parsed/expected UTC offset; regression test with fixed `git.build.time`.
 - **Ranks:** Exercise **4**, Stealth **4**, Scorability **3**
 
+### B11
+- **Location:** `hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/postgresql/PostgreSQLConnection.java`  
+  constructor ~lines 23–33
+- **Core relevance:** DB target naming drives metrics tags and graph IDs; used everywhere.
+- **Bug type:** Internationalization / correctness
+- **Proposed change:** Replace `toLowerCase(Locale.ROOT)` with `toLowerCase()` (default locale).
+- **Trigger conditions:** Turkish/Azeri locale and target names containing “I/İ” (e.g., INVENTORY).
+- **Expected symptom:** Target tag differs between services; env-var disable names and graph edges stop matching.
+- **Why it’s hard:** Only manifests in specific locales and names; looks like config drift.
+- **Static-analysis discoverability:** **Low** (locale bugs are easy to miss).
+- **Suggested detection:** Locale-specific unit test using `Locale("tr","TR")`.
+- **Ranks:** Exercise **4**, Stealth **5**, Scorability **4**
+
+### B12
+- **Location:** `hofund-core/src/main/java/dev/logchange/hofund/connection/Version.java`  
+  `compareTo()` ~lines 52–63
+- **Core relevance:** Version comparison drives required-version checks and alerts.
+- **Bug type:** Numeric precision / correctness
+- **Proposed change:** Use `Math.min(thisParts.length, otherParts.length)` for loop length (ignore extra segments).
+- **Trigger conditions:** Version strings with different segment counts (e.g., `1.2` vs `1.2.3`).
+- **Expected symptom:** Outdated services treated as up-to-date; missing or delayed alerts.
+- **Why it’s hard:** Only occurs on mixed-length versions; looks like a data issue.
+- **Static-analysis discoverability:** **Medium** (logic looks plausible).
+- **Suggested detection:** Unit test for differing segment lengths.  
+- **Note:** **Likely too easy unless direct test is removed** (there is a length-variance test).
+- **Ranks:** Exercise **4**, Stealth **3**, Scorability **5**
+
+### B13
+- **Location:** `hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionsTable.java`  
+  `checkVersions()` ~lines 71–76
+- **Core relevance:** Table output is a primary diagnostic view for connection health.
+- **Bug type:** Error handling gap / data integrity
+- **Proposed change:** Change guard to `if (version.isUnspecified() && requiredVersion.isUnspecified()) return;`.
+- **Trigger conditions:** One side is `N/A` or `UNKNOWN`, the other is set.
+- **Expected symptom:** `IllegalArgumentException` thrown during comparison; row falls back to DOWN/UNKNOWN.
+- **Why it’s hard:** Looks like a connection failure instead of version-logic failure.
+- **Static-analysis discoverability:** **Low** (condition looks innocuous).
+- **Suggested detection:** Unit test where required version is `N/A` and current is set.
+- **Ranks:** Exercise **4**, Stealth **4**, Scorability **4**
+
+### B14
+- **Location:** `hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionsTable.java`  
+  `print()` ~lines 37–51
+- **Core relevance:** Table generation triggers live connection checks in many environments.
+- **Bug type:** Performance regression / consistency
+- **Proposed change:** Call `connection.getFun().get().getConnection()` twice (once for status, once for version).
+- **Trigger conditions:** Slow or flaky endpoints; non-idempotent checks.
+- **Expected symptom:** Double traffic per refresh; occasional mismatch between status and version in a single row.
+- **Why it’s hard:** Nondeterministic; looks like remote flakiness.
+- **Static-analysis discoverability:** **Medium** (duplicate calls are easy to overlook).
+- **Suggested detection:** Integration test counting connection invocations per table render.
+- **Ranks:** Exercise **5**, Stealth **4**, Scorability **3**
+
+### B15
+- **Location:** `hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java`  
+  `parseResponseBody()` ~lines 42–45
+- **Core relevance:** Version parsing feeds tags, alerts, and dashboards.
+- **Bug type:** Encoding / data integrity
+- **Proposed change:** Use `new InputStreamReader(..., StandardCharsets.US_ASCII)` (or ISO-8859-1).
+- **Trigger conditions:** Response bodies with non-ASCII characters in JSON fields.
+- **Expected symptom:** Version extraction fails or returns UNKNOWN; tags become inconsistent.
+- **Why it’s hard:** Passes ASCII-only tests; fails only for localized payloads.
+- **Static-analysis discoverability:** **Low** (charset choice looks intentional).
+- **Suggested detection:** Unit test with UTF-8 response containing non-ASCII.
+- **Ranks:** Exercise **4**, Stealth **5**, Scorability **4**
+
+### B16
+- **Location:** `hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java`  
+  `getTags()` ~lines 104–110
+- **Core relevance:** Tags define graph edges and metric identity for all connections.
+- **Bug type:** API contract drift / data integrity
+- **Proposed change:** Swap the values for `source` and `target` tags.
+- **Trigger conditions:** Grafana node graph or dashboards expecting `source=app` and `target=dependency`.
+- **Expected symptom:** Edges appear reversed or missing; dependency graphs look inverted.
+- **Why it’s hard:** Metrics still emit; only visualizations or query semantics break.
+- **Static-analysis discoverability:** **Medium** (strings appear reasonable).
+- **Suggested detection:** Graph rendering integration test with a known dependency edge.  
+- **Note:** **Likely too easy unless direct test is removed** (there are tag tests).
+- **Ranks:** Exercise **4**, Stealth **3**, Scorability **5**
+
+### B17
+- **Location:** `hofund-core/src/main/java/dev/logchange/hofund/graph/edge/HofundEdgeMeter.java`  
+  `checkIdCollision()` ~lines 47–55
+- **Core relevance:** Graph edges must be uniquely identified to render correctly.
+- **Bug type:** Correctness / uniqueness validation
+- **Proposed change:** Check collisions using `connection.toTargetTag()` instead of `connection.getEdgeId(infoProvider)`.
+- **Trigger conditions:** Multiple edges to the same target with different types/descriptions.
+- **Expected symptom:** Startup fails with “edge id must be unique” even when edges are distinct.
+- **Why it’s hard:** Only in richer graphs; exception message points to data, not logic.
+- **Static-analysis discoverability:** **Low**.
+- **Suggested detection:** Unit test with two edges sharing target but different type/description.
+- **Ranks:** Exercise **5**, Stealth **4**, Scorability **3**
+
+### B18
+- **Location:** `hofund-spring-boot-autoconfigure/src/main/java/dev/logchange/hofund/git/springboot/autoconfigure/HofundDefaultGitInfoProperties.java`  
+  `@PropertySource` ~lines 6–8
+- **Core relevance:** Git metadata is core to observability tagging.
+- **Bug type:** Reliability / config loading
+- **Proposed change:** Remove `ignoreResourceNotFound = true` from `@PropertySource`.
+- **Trigger conditions:** Environments without `git.properties` (local/dev builds).
+- **Expected symptom:** Application fails to start due to missing resource.
+- **Why it’s hard:** CI/prod often have git.properties, so failure only in some envs.
+- **Static-analysis discoverability:** **Medium**.
+- **Suggested detection:** Boot test without git.properties on classpath.
+- **Ranks:** Exercise **4**, Stealth **4**, Scorability **4**
+
+### B19
+- **Location:** `hofund-spring-boot-autoconfigure/src/main/java/dev/logchange/hofund/git/springboot/autoconfigure/HofundGitInfoAutoConfiguration.java`  
+  `defaultIfEmpty()` ~lines 65–71
+- **Core relevance:** Git metadata tags are used in dashboards and rollouts.
+- **Bug type:** Config precedence / data integrity
+- **Proposed change:** Invert the condition so defaults override explicit values.
+- **Trigger conditions:** Users set custom git info values via properties.
+- **Expected symptom:** Tags show stale/default values despite explicit configuration.
+- **Why it’s hard:** Looks like binding or build-pipeline issue.
+- **Static-analysis discoverability:** **Low** (logic reads plausibly).
+- **Suggested detection:** Unit test asserting configured values win over defaults.
+- **Ranks:** Exercise **4**, Stealth **4**, Scorability **4**
+
+### B20
+- **Location:** `hofund-spring-boot-autoconfigure/src/main/java/dev/logchange/hofund/web/springboot/autoconfigure/HofundWebServerInfoAutoConfiguration.java`  
+  `tomcatHofundWebServerInfoProvider()` ~lines 26–30
+- **Core relevance:** Web server metadata is core for runtime diagnostics.
+- **Bug type:** Compatibility / dependency boundary
+- **Proposed change:** Remove `@ConditionalOnClass(ServerInfo.class)` from the Tomcat provider.
+- **Trigger conditions:** Running on Undertow/Netty without Tomcat classes.
+- **Expected symptom:** `NoClassDefFoundError` at startup; auto-config fails.
+- **Why it’s hard:** Works in Tomcat-based environments; fails only on other containers.
+- **Static-analysis discoverability:** **Medium**.
+- **Suggested detection:** Boot test with Undertow or WebFlux server.
+- **Ranks:** Exercise **4**, Stealth **4**, Scorability **4**
+
 ---
 
 ## Top 10 recommended set
 
-- **B03** – Core data integrity risk (wrong version) with high stealth.
-- **B07** – Realistic resource leak in DB detection path; high impact.
-- **B08** – Timeouts misinterpreted: subtle, high production impact.
-- **B05** – Concurrency bug in graph ID checks; nondeterministic and educational.
-- **B06** – Cache/staleness bug in metrics gauge; common Micrometer pitfall.
-- **B09** – Security bug: leaks credentials via observability tags.
-- **B02** – Timeout swap: subtle operational flakiness.
-- **B10** – Timezone bug in build metadata: classic, subtle.
-- **B01** – API drift in HTTP status handling; informative but test‑detectable.
-- **B04** – Env var normalization drift; scorable but test‑detectable.
+- **B11** – Locale-specific target mismatch; subtle and high-impact in i18n envs.
+- **B12** – Version compare truncation; silently misses required-version alerts.
+- **B13** – Unspecified-version guard bug; surfaces as false DOWN rows.
+- **B14** – Double health checks per row; causes inconsistency and load spikes.
+- **B15** – ASCII-only parsing; breaks version detection for UTF-8 payloads.
+- **B16** – Source/target tag swap; graph semantics inverted without errors.
+- **B17** – Edge collision false positives; breaks graph on realistic dependency sets.
+- **B18** – Missing git.properties startup failure; environment-specific reliability trap.
+- **B19** – Config precedence inversion; stale git metadata despite overrides.
+- **B20** – Tomcat-only class usage; crashes on Undertow/Netty deployments.
 
 ---
 
@@ -202,14 +334,14 @@ Connection checks (HTTP/DB) and version parsing feed both metrics and the ASCII 
 
 Goal: Each instance has two bugs with **mixed types** (correctness/data, reliability/perf, security/time, concurrency/caching).
 
-- **I01:** B03 (data integrity) + B07 (resource leak)  
-  *Core correctness + reliability.*
-- **I02:** B08 (timeout/perf) + B06 (caching/staleness)  
-  *Performance regression + caching/invalidation.*
-- **I03:** B05 (concurrency) + B10 (time/timezone)  
-  *Nondeterminism + temporal bug.*
-- **I04:** B09 (security leak) + B02 (timeout swap)  
-  *Security + reliability.*
-- **I05:** B01 (API drift) + B04 (config parsing)  
-  *Contract drift + edge-case config handling.*
+- **I01:** B11 (i18n correctness) + B18 (config loading)  
+  *Locale sensitivity + environment-specific reliability.*
+- **I02:** B12 (numeric correctness) + B16 (API contract drift)  
+  *Version precision + graph semantics.*
+- **I03:** B13 (error handling) + B20 (compatibility)  
+  *Hidden exceptions + container-specific startup failures.*
+- **I04:** B14 (performance/consistency) + B19 (config precedence)  
+  *Load amplification + metadata drift.*
+- **I05:** B15 (encoding/data integrity) + B17 (graph correctness)  
+  *UTF-8 parsing + edge identity validation.*
 
