@@ -137,7 +137,7 @@ public class HofundConnection {
     }
 
     public static String getEnvVarName(String target) {
-        target = target.replace("-", "_");
+        target = target.replace("-", "");
         target = target.replaceAll("[^A-Za-z0-9_]", "");
         target = target.toUpperCase();
         return "HOFUND_CONNECTION_" + target + "_DISABLED";

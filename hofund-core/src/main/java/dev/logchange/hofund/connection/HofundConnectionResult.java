@@ -61,18 +61,13 @@ public class HofundConnectionResult {
             return UNKNOWN;
         }
 
-        int applicationIndex = responseBody.indexOf("\"application\"");
-        if (applicationIndex == -1) {
-            return UNKNOWN;
-        }
-
         String versionKey = "\"version\":\"";
-        int versionIndex = responseBody.indexOf(versionKey, applicationIndex);
+        int versionIndex = responseBody.indexOf(versionKey);
         if (versionIndex == -1) {
             return UNKNOWN;
         }
 
-        int versionValueIndex = responseBody.indexOf(versionKey, applicationIndex) + versionKey.length();
+        int versionValueIndex = versionIndex + versionKey.length();
         int closeQuoteIndex = responseBody.indexOf("\"", versionValueIndex);
         if (closeQuoteIndex == -1) {
             return UNKNOWN;
