@@ -1,0 +1,60 @@
+{
+  "criteria": [
+    {
+      "id": "B01",
+      "weight": 1,
+      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java",
+      "location": "AbstractHofundBasicHttpConnection#testConnection",
+      "criterion": "HTTP success is limited to 2xx only; 3xx responses are treated as DOWN."
+    },
+    {
+      "id": "B02",
+      "weight": 1,
+      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java",
+      "location": "AbstractHofundBasicHttpConnection#testConnection",
+      "criterion": "Read timeout is set using the connect timeout value instead of the read timeout."
+    },
+    {
+      "id": "B03",
+      "weight": 1,
+      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java",
+      "location": "HofundConnectionResult#extractVersionFromResponse",
+      "criterion": "Version extraction uses the first \"version\" key without anchoring to the \"application\" object."
+    },
+    {
+      "id": "B04",
+      "weight": 1,
+      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java",
+      "location": "HofundConnection#getEnvVarName",
+      "criterion": "Hyphens in target names are removed rather than converted to underscores when building env var names."
+    },
+    {
+      "id": "B05",
+      "weight": 1,
+      "file": "hofund-core/src/main/java/dev/logchange/hofund/graph/node/HofundNodeMeter.java",
+      "location": "HofundNodeMeter#checkIdCollision",
+      "criterion": "ID collision check iterates connections in parallel over a non-thread-safe list."
+    },
+    {
+      "id": "B06",
+      "weight": 1,
+      "file": "hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionMeter.java",
+      "location": "HofundConnectionMeter#bindTo",
+      "criterion": "Gauge is registered with a constant precomputed status value rather than querying live connection status."
+    },
+    {
+      "id": "B07",
+      "weight": 1,
+      "file": "hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DataSourceConnectionFactory.java",
+      "location": "DataSourceConnectionFactory#of",
+      "criterion": "Datasource metadata connection is not closed after use."
+    },
+    {
+      "id": "B08",
+      "weight": 1,
+      "file": "hofund-spring/src/main/java/dev/logchange/hofund/connection/spring/datasource/DatasourceConnection.java",
+      "location": "DatasourceConnection#testConnection",
+      "criterion": "Query timeout is multiplied by 1000, treating seconds as milliseconds and vastly increasing timeout."
+    }
+  ]
+}
