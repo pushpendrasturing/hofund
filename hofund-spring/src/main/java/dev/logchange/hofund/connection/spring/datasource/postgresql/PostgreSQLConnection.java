@@ -6,7 +6,6 @@ import org.slf4j.Logger;
 import javax.sql.DataSource;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
-import java.util.Locale;
 
 import static org.slf4j.LoggerFactory.*;
 
@@ -29,7 +28,7 @@ public class PostgreSQLConnection extends DatasourceConnection {
             if (url.lastIndexOf("?") != -1) {
                 to = url.lastIndexOf("?");
             }
-            this.target = url.substring(slashIndex + 1, to).toLowerCase(Locale.ROOT);
+            this.target = url.substring(slashIndex + 1, to).toLowerCase();
             this.dbVendor = metaData.getDatabaseProductName();
         } catch (SQLException e) {
             log.warn("Error getting db information", e);

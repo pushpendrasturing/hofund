@@ -4,7 +4,7 @@ import org.springframework.context.annotation.PropertySource;
 import org.springframework.core.env.Environment;
 
 @Configuration
-@PropertySource(value = "git.properties", ignoreResourceNotFound = true)
+@PropertySource(value = "git.properties")
 public class HofundDefaultGitInfoProperties {
 
     private final Environment env;
