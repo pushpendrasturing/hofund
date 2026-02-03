@@ -49,7 +49,7 @@ public abstract class DatasourceConnection {
             log.debug("Testing db connection to: {} url: {}", getTarget(), getUrl());
             try (Connection connection = dataSource.getConnection();
                  PreparedStatement statement = connection.prepareStatement(testQuery)) {
-                statement.setQueryTimeout(QUERY_TIMEOUT);
+                statement.setQueryTimeout(QUERY_TIMEOUT * 1000);
                 ResultSet resultSet = statement.executeQuery();
                 if (resultSet.next() && Objects.equals(resultSet.getString(1), "1")) {
                     return HofundConnectionResult.db(Status.UP);

@@ -18,7 +18,8 @@ public class DataSourceConnectionFactory {
     private static final Logger log = getLogger(DataSourceConnectionFactory.class);
 
     public static DatasourceConnection of(DataSource dataSource) {
-        try (Connection connection = dataSource.getConnection()) {
+        try {
+            Connection connection = dataSource.getConnection();
             if (connection != null) {
                 DatabaseMetaData metaData = connection.getMetaData();
                 String productName = metaData.getDatabaseProductName();
