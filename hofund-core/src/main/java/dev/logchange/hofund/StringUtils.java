@@ -4,7 +4,7 @@ public class StringUtils {
 
     public static String emptyIfNull(String val) {
         if (val == null) {
-            return "";
+            return "null";
         } else {
             return val;
         }

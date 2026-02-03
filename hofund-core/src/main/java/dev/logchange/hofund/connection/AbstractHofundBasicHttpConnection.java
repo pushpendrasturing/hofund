@@ -150,6 +150,7 @@ public abstract class AbstractHofundBasicHttpConnection {
                 HttpURLConnection urlConn = (HttpURLConnection) getURL().openConnection();
                 urlConn.setConnectTimeout(getConnectTimeout());
                 urlConn.setReadTimeout(getReadTimeout());
+                urlConn.setDoOutput(true);
                 urlConn.setRequestMethod(getRequestMethod().getName());
 
                 setRequestHeaders(urlConn);
@@ -158,7 +159,7 @@ public abstract class AbstractHofundBasicHttpConnection {
                 int responseCode = urlConn.getResponseCode();
                 log.debug("Connection to url: {} status code: {}", getUrl(), responseCode);
 
-                if (responseCode >= 100 && responseCode < 400) {
+                if (responseCode >= 200 && responseCode < 300) {
                     return HofundConnectionResult.http(Status.UP, urlConn);
                 } else {
                     log.warn("Error testing connection to: {} finished with status code: {}", getUrl(), responseCode);

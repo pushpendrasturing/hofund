@@ -26,6 +26,7 @@ public class HofundConnection {
     private final String description;
     private String icon;
     private String requiredVersion;
+    private List<Tag> cachedTags;
 
     /**
      * Creates a new HofundConnection.
@@ -102,6 +103,10 @@ public class HofundConnection {
     }
 
     public List<Tag> getTags(HofundInfoProvider infoProvider) {
+        if (cachedTags != null) {
+            return cachedTags;
+        }
+
         List<Tag> tags = new LinkedList<>();
         tags.add(Tag.of("id", getEdgeId(infoProvider)));
         tags.add(Tag.of("source", infoProvider.getApplicationName()));
@@ -109,6 +114,7 @@ public class HofundConnection {
         tags.add(Tag.of("type", getType().toString()));
         tags.add(Tag.of("detected_version", getFun().get().getConnection().getVersion().toString()));
         tags.add(Tag.of("required_version", getRequiredVersion().toString()));
+        cachedTags = tags;
         return tags;
     }
 
@@ -137,7 +143,7 @@ public class HofundConnection {
     }
 
     public static String getEnvVarName(String target) {
-        target = target.replace("-", "_");
+        target = target.replace("-", "");
         target = target.replaceAll("[^A-Za-z0-9_]", "");
         target = target.toUpperCase();
         return "HOFUND_CONNECTION_" + target + "_DISABLED";

@@ -66,7 +66,7 @@ public class HofundConnectionResult {
             return UNKNOWN;
         }
 
-        String versionKey = "\"version\":\"";
+        String versionKey = "\"version\": \"";
         int versionIndex = responseBody.indexOf(versionKey, applicationIndex);
         if (versionIndex == -1) {
             return UNKNOWN;
