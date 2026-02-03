@@ -1,0 +1,40 @@
+{
+  "upload_directory": "/tmp/files/",
+  "output_directory": "/tmp/outputs/",
+  "system_prompt": "You are an expert code reviewer. Analyze the provided codebase for bugs, security issues, and correctness problems. Provide actionable feedback. All files are located in /tmp/files.",
+  "task_prompt": "You are an expert code reviewer. Your task is to analyze the Hofund metrics and connection monitoring library codebase. Focus on subtle bugs, data integrity issues, and logic flaws detectable via static analysis. Write your findings to /tmp/outputs/review.md.",
+  "rubric": [
+    {
+      "criterion": "Identifies the HTTP status handling bug in hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java where only 2xx responses are treated as success, causing redirect (3xx) endpoints to be marked DOWN",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the request method bug in hofund-core/src/main/java/dev/logchange/hofund/connection/AbstractHofundBasicHttpConnection.java where setDoOutput(true) is applied to all requests, which can flip GET/HEAD to POST on some JDKs",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the tag caching bug in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java where getTags() caches the list, so detected_version never updates after the first call",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the env var naming bug in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnection.java where hyphens are removed (not converted to underscores), causing disablement env vars to be ignored for dashed targets",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the JSON parsing bug in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionResult.java where the version key requires a space after the colon (\"\\\"version\\\": \\\"\"), breaking minified JSON parsing",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the metrics tagging bug in hofund-core/src/main/java/dev/logchange/hofund/connection/HofundConnectionMeter.java where tags from the first connection are reused for all gauges, collapsing distinct series",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the node subtitle bug in hofund-core/src/main/java/dev/logchange/hofund/graph/node/HofundNodeMeter.java where the subtitle drops the connection type when a description is present, reducing node disambiguation",
+      "weight": 1
+    },
+    {
+      "criterion": "Identifies the null handling bug in hofund-core/src/main/java/dev/logchange/hofund/StringUtils.java where emptyIfNull() returns the literal string \"null\" instead of an empty string",
+      "weight": 1
+    }
+  ]
+}
